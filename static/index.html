@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tree Surivial Analysis</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        text-align: center;
+        background: #f5f5f5;
+        margin: 20px;
+      }
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        background: white;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      h1 {
+        margin-bottom: 10px;
+      }
+      .axis-label {
+        font-size: 14px;
+        fill: #4a5568;
+      }
+      .bubble {
+        stroke: #333;
+        stroke-width: 1px;
+        opacity: 0.8;
+      }
+      .legend-box {
+        fill: white;
+        stroke: #ccc;
+        stroke-width: 1px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Tree Survival Analysis: DBH vs. Age</h1>
+      <svg id="scatterplot" width="1200" height="600"></svg>
+    </div>
+
+    <script>
+      async function createScatterplot() {
+        const margin = { top: 50, right: 250, bottom: 80, left: 80 };
+        const width = 1200 - margin.left - margin.right;
+        const height = 600 - margin.top - margin.bottom;
+
+        const svg = d3.select("#scatterplot");
+        const g = svg
+          .append("g")
+          .attr("transform", `translate(${margin.left},${margin.top})`);
+
+        const data = await d3.csv("Street_Tree_List-2022-01-30_FILTERED.csv");
+
+        const parseDate = d3.timeParse("%m/%d/%y %H:%M");
+        const currentYear = new Date().getFullYear();
+        const validData = data.filter(
+          (d) =>
+            d.PlantDate &&
+            !isNaN(parseDate(d.PlantDate)) &&
+            d.DBH &&
+            !isNaN(+d.DBH)
+        );
+
+        validData.forEach((d) => {
+          const plantYear = parseDate(d.PlantDate).getFullYear();
+          d.Age = currentYear - plantYear;
+          d.DBH = +d.DBH;
+        });
+
+        validData.forEach((d) => {
+          if (!d.qCaretaker) {
+            d.qCaretaker = "Other";
+          } else {
+            d.qCaretaker = d.qCaretaker.trim().toLowerCase();
+          }
+
+          if (
+            d.qCaretaker.includes("dpw") ||
+            d.qCaretaker.includes("rec") ||
+            d.qCaretaker.includes("police") ||
+            d.qCaretaker.includes("health")
+          ) {
+            d.qCaretaker = "City/Public";
+          } else if (
+            d.qCaretaker.includes("private") ||
+            d.qCaretaker.includes("real estate") ||
+            d.qCaretaker.includes("housing")
+          ) {
+            d.qCaretaker = "Private";
+          } else if (
+            d.qCaretaker.includes("college") ||
+            d.qCaretaker.includes("library") ||
+            d.qCaretaker.includes("sfusd")
+          ) {
+            d.qCaretaker = "Institutional";
+          } else {
+            d.qCaretaker = "Other";
+          }
+        });
+
+        const groupedData = d3.rollup(
+          validData,
+          (v) => ({
+            avgDBH: d3.mean(v, (d) => d.DBH),
+            count: v.length,
+            caretaker: d3.mode(v.map((d) => d.qCaretaker)) || "Other",
+          }),
+          (d) => d.Age
+        );
+
+        const ageGroups = Array.from(groupedData, ([age, data]) => ({
+          age: +age,
+          avgDBH: data.avgDBH,
+          count: data.count,
+          caretaker: data.caretaker,
+        })).sort((a, b) => a.age - b.age);
+
+        // Scales
+        const xScale = d3
+          .scaleLinear()
+          .domain([0, d3.max(ageGroups, (d) => d.age)])
+          .range([0, width]);
+
+        const yScale = d3
+          .scaleLinear()
+          .domain([0, d3.max(ageGroups, (d) => d.avgDBH)])
+          .range([height, 0]);
+
+        const sizeScale = d3
+          .scaleSqrt()
+          .domain([0, d3.max(ageGroups, (d) => d.count)])
+          .range([5, 40]);
+
+        const colorScale = d3
+          .scaleOrdinal()
+          .domain(["City/Public", "Private", "Institutional", "Other"])
+          .range(["#FFEEAD", "#96CEB4", "#A02334", "#FFAD60"]);
+
+        // Draw circles
+        g.selectAll(".bubble")
+          .data(ageGroups)
+          .join("circle")
+          .attr("class", "bubble")
+          .attr("cx", (d) => xScale(d.age))
+          .attr("cy", (d) => yScale(d.avgDBH))
+          .attr("r", (d) => sizeScale(d.count))
+          .attr("fill", (d) => colorScale(d.caretaker));
+
+        // Add axes
+        g.append("g")
+          .attr("transform", `translate(0,${height})`)
+          .call(d3.axisBottom(xScale).ticks(15));
+
+        g.append("text")
+          .attr("class", "axis-label")
+          .attr("x", width / 2)
+          .attr("y", height + 50)
+          .style("text-anchor", "middle")
+          .text("Tree Age (Years)");
+
+        g.append("g").call(d3.axisLeft(yScale));
+
+        g.append("text")
+          .attr("class", "axis-label")
+          .attr("transform", "rotate(-90)")
+          .attr("x", -height / 2)
+          .attr("y", -60)
+          .style("text-anchor", "middle")
+          .text("Average Tree Diameter (DBH)");
+
+        const legendContainer = svg
+          .append("g")
+          .attr(
+            "transform",
+            `translate(${width + margin.left + 50}, ${margin.top})`
+          );
+
+        const caretakerBox = legendContainer
+          .append("rect")
+          .attr("class", "legend-box")
+          .attr("x", -20)
+          .attr("y", -20)
+          .attr("width", 160)
+          .attr("height", 150);
+
+        const categories = ["City/Public", "Private", "Institutional", "Other"];
+        const caretakerLegend = legendContainer.append("g");
+
+        caretakerLegend
+          .append("text")
+          .attr("x", 0)
+          .attr("y", 0)
+          .text("Caretaker Type")
+          .attr("font-size", "14px")
+          .attr("font-weight", "bold");
+
+        caretakerLegend
+          .selectAll("legend-dots")
+          .data(categories)
+          .join("circle")
+          .attr("cx", 0)
+          .attr("cy", (d, i) => i * 25 + 30)
+          .attr("r", 8)
+          .attr("fill", (d) => colorScale(d));
+
+        caretakerLegend
+          .selectAll("legend-labels")
+          .data(categories)
+          .join("text")
+          .attr("x", 20)
+          .attr("y", (d, i) => i * 25 + 35)
+          .text((d) => d)
+          .attr("font-size", "12px")
+          .attr("alignment-baseline", "middle");
+
+        const sizeLegendY = categories.length * 25 + 80;
+        const sizeLegendBox = legendContainer
+          .append("rect")
+          .attr("class", "legend-box")
+          .attr("x", -20)
+          .attr("y", sizeLegendY - 20)
+          .attr("width", 180)
+          .attr("height", 350);
+
+        const sizeLegend = legendContainer
+          .append("g")
+          .attr("transform", `translate(0, ${sizeLegendY})`);
+
+        sizeLegend
+          .append("text")
+          .attr("x", 0)
+          .attr("y", 0)
+          .text("Tree Count (Size)")
+          .attr("font-size", "14px")
+          .attr("font-weight", "bold");
+
+        const sizeValues = [10, 50, 100];
+        const legendSizeScale = d3
+          .scaleSqrt()
+          .domain([0, d3.max(sizeValues)])
+          .range([5, 40]);
+
+        const maxRadius = legendSizeScale(d3.max(sizeValues));
+        const spacing = maxRadius * 2.5;
+
+        sizeLegend
+          .selectAll("legend-bubbles")
+          .data(sizeValues)
+          .join("circle")
+          .attr("cx", maxRadius)
+          .attr("cy", (d, i) => i * spacing + maxRadius + 30)
+          .attr("r", (d) => legendSizeScale(d))
+          .attr("fill", "none")
+          .attr("stroke", "#333");
+
+        sizeLegend
+          .selectAll("legend-labels")
+          .data(sizeValues)
+          .join("text")
+          .attr("x", maxRadius * 2 + 10)
+          .attr("y", (d, i) => i * spacing + maxRadius + 30)
+          .text((d) => `${d} Trees`)
+          .attr("font-size", "12px")
+          .attr("alignment-baseline", "middle");
+      }
+
+      createScatterplot();
+    </script>
+  </body>
+</html>
